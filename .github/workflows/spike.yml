@@ -4,7 +4,7 @@ on:
     paths: [".github/workflows/spike.yml"]
   workflow_dispatch:
 jobs:
-  wasm:
+  wasmsim:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,9 +13,8 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
           rustup target add wasm32-unknown-unknown
-      - name: "WASM com getrandom wasm_js — destrava? aparece rayon?"
+      - name: "Compilar wasmsim -> wasm (iteracao 1)"
         run: |
           set -o pipefail
-          cargo add getrandom@0.4 --features wasm_js -p core 2>&1 | tail -4 || true
-          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p core --target wasm32-unknown-unknown 2>&1 | tail -60
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p wasmsim --target wasm32-unknown-unknown 2>&1 | tail -70
         continue-on-error: true
