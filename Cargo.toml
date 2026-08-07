@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/core", "src/database", "src/web"]
+members = ["src/core", "src/database", "src/web", "src/wasmsim"]
 exclude = [".dev/match", ".dev/simulate", ".dev/transfers"]
 
 [workspace.package]
