@@ -63,15 +63,8 @@ pub fn simulate_match() -> String {
     let home = make_squad(1);
     let away = make_squad(2);
     let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
-    format!("{:?}", result.score)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn runs() {
-        let s = super::simulate_match();
-        println!("PLACAR_SIMULADO=={}==", s);
-        assert!(!s.is_empty());
+    match result.score {
+        Some(s) => format!("{{\"home\":{},\"away\":{}}}", s.home_team.score, s.away_team.score),
+        None => "{\"home\":0,\"away\":0}".to_string(),
     }
 }
