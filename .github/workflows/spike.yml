@@ -13,8 +13,13 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
           rustup target add wasm32-unknown-unknown
-      - name: "Compilar wasmsim -> wasm (iteracao 1)"
+      - name: "Rodar simulacao (nativo) - placar real"
         run: |
           set -o pipefail
-          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p wasmsim --target wasm32-unknown-unknown 2>&1 | tail -70
+          cargo test -p wasmsim -- --nocapture 2>&1 | tail -40
+        continue-on-error: true
+      - name: "Compilar wasmsim -> wasm"
+        run: |
+          set -o pipefail
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p wasmsim --target wasm32-unknown-unknown 2>&1 | tail -20
         continue-on-error: true
