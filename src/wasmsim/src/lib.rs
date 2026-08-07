@@ -65,3 +65,13 @@ pub fn simulate_match() -> String {
     let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
     format!("{:?}", result.score)
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn runs() {
+        let s = super::simulate_match();
+        println!("PLACAR_SIMULADO=={}==", s);
+        assert!(!s.is_empty());
+    }
+}
