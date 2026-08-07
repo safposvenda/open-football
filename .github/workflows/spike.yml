@@ -1,0 +1,31 @@
+name: core-spike
+on:
+  push:
+    paths: [".github/workflows/spike.yml"]
+  workflow_dispatch:
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain + wasm target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+          rustc --version
+      - name: "1) Build core (native) — compila a logica?"
+        run: |
+          set -o pipefail
+          cargo build -p core 2>&1 | tail -40
+        continue-on-error: true
+      - name: "2) Test core — a simulacao roda?"
+        run: |
+          set -o pipefail
+          cargo test -p core 2>&1 | tail -70
+        continue-on-error: true
+      - name: "3) Build core -> wasm32 — teste decisivo (rayon/getrandom)"
+        run: |
+          set -o pipefail
+          cargo build -p core --target wasm32-unknown-unknown 2>&1 | tail -70
+        continue-on-error: true
