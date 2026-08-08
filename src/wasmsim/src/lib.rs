@@ -129,6 +129,43 @@ fn parse_two(dbg: &str) -> (u32, u32) {
     (it.next().unwrap_or(0), it.next().unwrap_or(0))
 }
 
+fn field_u32(seg: &str, key: &str) -> u32 {
+    if let Some(i) = seg.find(key) {
+        seg[i + key.len()..]
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+// Extrai os gols do Debug do placar como JSON: [[lado,minuto,posicao,contra],...]
+// lado: 0=mandante, 1=visitante; posicao: 0..10 (índice no 4-4-2); contra: gol contra.
+fn extract_events(dbg: &str, home_team_id: u32, _away_team_id: u32) -> String {
+    let mut evs: Vec<String> = Vec::new();
+    for seg in dbg.split("GoalDetail {").skip(1) {
+        if !seg.contains("stat_type: Goal") {
+            continue; // ignora assistências
+        }
+        let pid = field_u32(seg, "player_id:");
+        let own = seg.contains("is_auto_goal: true");
+        let time = field_u32(seg, "time:");
+        let team = pid / 100;
+        let pos = pid % 100;
+        let min = (time / 60000).min(90);
+        let mut side = if team == home_team_id { 0 } else { 1 };
+        if own {
+            side = 1 - side; // gol contra conta pro adversário
+        }
+        evs.push(format!("[{},{},{},{}]", side, min, pos, if own { 1 } else { 0 }));
+    }
+    format!("[{}]", evs.join(","))
+}
+
 // ===== Mundo do jogo: os times (elencos) sao gerados UMA vez por temporada e
 // reaproveitados em todas as partidas (a geracao de jogador e o gargalo). =====
 thread_local! {
@@ -164,11 +201,22 @@ fn play_pair(home_idx: u32, away_idx: u32) -> (u32, u32) {
     })
 }
 
-// Joga uma partida entre dois times ja montados por setup_league.
+// Joga uma partida entre dois times ja montados por setup_league e devolve
+// placar + eventos de gol: {"home":X,"away":Y,"ev":[[lado,min,pos,contra],...]}.
 #[wasm_bindgen]
 pub fn play_match(home_idx: u32, away_idx: u32) -> String {
-    let (h, a) = play_pair(home_idx, away_idx);
-    format!("{{\"home\":{},\"away\":{}}}", h, a)
+    WORLD.with(|w| {
+        let w = w.borrow();
+        let home_id = home_idx + 1;
+        let away_id = away_idx + 1;
+        let home = squad_from_players(home_id, &w[home_idx as usize]);
+        let away = squad_from_players(away_id, &w[away_idx as usize]);
+        let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
+        let dbg = format!("{:?}", result.score);
+        let (h, a) = parse_two(&dbg);
+        let ev = extract_events(&dbg, home_id, away_id);
+        format!("{{\"home\":{},\"away\":{},\"ev\":{}}}", h, a, ev)
+    })
 }
 
 // Compat: partida avulsa entre dois niveis (gera na hora — mais lento).
@@ -184,28 +232,10 @@ pub fn simulate_match(home_level: u8, away_level: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
     #[test]
-    fn perf_and_bias() {
-        let levels = [5u8, 6, 5, 7, 6, 5, 8, 6];
-        let t = Instant::now();
-        setup_league(&levels);
-        println!("GENALL== {} ms p/ 8 times (88 jogadores) ==", t.elapsed().as_millis());
-
-        let n = 20u32;
-        let t = Instant::now();
-        for i in 0..n {
-            let _ = play_pair((i % 8) as u32, ((i + 1) % 8) as u32);
-        }
-        let total = t.elapsed().as_millis();
-        println!("PLAYAVG== {} ms/partida ({} partidas em {} ms, elencos em cache) ==", total / n as u128, n, total);
-
-        setup_league(&[16u8, 2, 16, 2, 16, 2, 16, 2]);
-        let (mut sw, mut d, mut ww) = (0u32, 0u32, 0u32);
-        for _ in 0..20 {
-            let (h, a) = play_pair(0, 1);
-            if h > a { sw += 1; } else if h < a { ww += 1; } else { d += 1; }
-        }
-        println!("BIAS_CACHE== forte x fraco: Vforte={} E={} Vfraco={} em 20 (com cache) ==", sw, d, ww);
+    fn events_sanity() {
+        setup_league(&[14u8, 4, 14, 4, 14, 4, 14, 4]);
+        println!("EV_STRONG_HOME== {} ==", play_match(0, 1));
+        println!("EV_WEAK_HOME== {} ==", play_match(1, 0));
     }
 }
