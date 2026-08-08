@@ -4,6 +4,7 @@ use core::r#match::player::MatchPlayer;
 use core::r#match::{FootballEngine, MatchSquad};
 use core::staff_contract_mod::NaiveDate;
 use core::{AcademyGenerationContext, PeopleNameGeneratorData, PlayerGenerator, PlayerSkills};
+use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
 const POSITIONS_442: [PlayerPositionType; 11] = [
@@ -21,9 +22,7 @@ const POSITIONS_442: [PlayerPositionType; 11] = [
 ];
 
 // Curva de forca por "nivel" (copiada do harness .dev/match do open-football,
-// Apache 2.0): reposiciona a MEDIA de skills do jogador para BASE + nivel*STEP,
-// preservando o formato por posicao (atacante continua finalizador, zagueiro
-// continua marcador). E isso que faz times mais fortes/mais fracos.
+// Apache 2.0): reposiciona a MEDIA de skills para BASE + nivel*STEP.
 struct LevelSkillCurve;
 impl LevelSkillCurve {
     const BASE: f32 = 3.6;
@@ -96,14 +95,12 @@ fn make_player(id: u32, position: PlayerPositionType, level: u8) -> Player {
     p
 }
 
-fn make_squad(team_id: u32, level: u8) -> MatchSquad {
-    let base = team_id * 100;
-    let main_squad: Vec<MatchPlayer> = POSITIONS_442
+// Monta um MatchSquad emprestando (sem mover/clonar) os jogadores ja gerados.
+fn squad_from_players(team_id: u32, players: &[Player]) -> MatchSquad {
+    let main_squad: Vec<MatchPlayer> = players
         .iter()
-        .enumerate()
-        .map(|(i, &pos)| {
-            MatchPlayer::from_player(team_id, &make_player(base + i as u32, pos, level), pos, false, None)
-        })
+        .zip(POSITIONS_442.iter())
+        .map(|(p, &pos)| MatchPlayer::from_player(team_id, p, pos, false, None))
         .collect();
     MatchSquad {
         team_id,
@@ -120,12 +117,7 @@ fn make_squad(team_id: u32, level: u8) -> MatchSquad {
     }
 }
 
-// Roda uma partida e extrai (gols_casa, gols_fora) do Debug (campos privados).
-fn play_once(home_level: u8, away_level: u8) -> (u32, u32) {
-    let home = make_squad(1, home_level);
-    let away = make_squad(2, away_level);
-    let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
-    let dbg = format!("{:?}", result.score);
+fn parse_two(dbg: &str) -> (u32, u32) {
     let mut it = dbg.split("score:").skip(1).map(|seg| {
         seg.trim_start()
             .chars()
@@ -134,39 +126,86 @@ fn play_once(home_level: u8, away_level: u8) -> (u32, u32) {
             .parse::<u32>()
             .unwrap_or(0)
     });
-    let h = it.next().unwrap_or(0);
-    let a = it.next().unwrap_or(0);
-    (h, a)
+    (it.next().unwrap_or(0), it.next().unwrap_or(0))
 }
 
-// API do jogo: simula uma partida entre um time de nivel `home_level` (mandante)
-// e outro de `away_level`, e devolve o placar em JSON: {"home":X,"away":Y}.
+// ===== Mundo do jogo: os times (elencos) sao gerados UMA vez por temporada e
+// reaproveitados em todas as partidas (a geracao de jogador e o gargalo). =====
+thread_local! {
+    static WORLD: RefCell<Vec<Vec<Player>>> = RefCell::new(Vec::new());
+}
+
+// Gera uma liga com um elenco por nivel informado (ids unicos por time).
+#[wasm_bindgen]
+pub fn setup_league(levels: &[u8]) {
+    WORLD.with(|w| {
+        let mut w = w.borrow_mut();
+        w.clear();
+        for (ti, &lvl) in levels.iter().enumerate() {
+            let team_id = (ti as u32) + 1;
+            let base = team_id * 100;
+            let players: Vec<Player> = POSITIONS_442
+                .iter()
+                .enumerate()
+                .map(|(i, &pos)| make_player(base + i as u32, pos, lvl))
+                .collect();
+            w.push(players);
+        }
+    });
+}
+
+fn play_pair(home_idx: u32, away_idx: u32) -> (u32, u32) {
+    WORLD.with(|w| {
+        let w = w.borrow();
+        let home = squad_from_players(home_idx + 1, &w[home_idx as usize]);
+        let away = squad_from_players(away_idx + 1, &w[away_idx as usize]);
+        let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
+        parse_two(&format!("{:?}", result.score))
+    })
+}
+
+// Joga uma partida entre dois times ja montados por setup_league.
+#[wasm_bindgen]
+pub fn play_match(home_idx: u32, away_idx: u32) -> String {
+    let (h, a) = play_pair(home_idx, away_idx);
+    format!("{{\"home\":{},\"away\":{}}}", h, a)
+}
+
+// Compat: partida avulsa entre dois niveis (gera na hora — mais lento).
 #[wasm_bindgen]
 pub fn simulate_match(home_level: u8, away_level: u8) -> String {
-    let (h, a) = play_once(home_level, away_level);
+    let home = squad_from_players(1, &(0..11).map(|i| make_player(100 + i, POSITIONS_442[i as usize], home_level)).collect::<Vec<_>>());
+    let away = squad_from_players(2, &(0..11).map(|i| make_player(200 + i, POSITIONS_442[i as usize], away_level)).collect::<Vec<_>>());
+    let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
+    let (h, a) = parse_two(&format!("{:?}", result.score));
     format!("{{\"home\":{},\"away\":{}}}", h, a)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn series(home_level: u8, away_level: u8, n: u32) -> (u32, u32, u32, u32, u32) {
-        let (mut hw, mut d, mut aw, mut hg, mut ag) = (0u32, 0u32, 0u32, 0u32, 0u32);
-        for _ in 0..n {
-            let (h, a) = play_once(home_level, away_level);
-            hg += h; ag += a;
-            if h > a { hw += 1; } else if h < a { aw += 1; } else { d += 1; }
-        }
-        (hw, d, aw, hg, ag)
-    }
+    use std::time::Instant;
     #[test]
-    fn quality_bias() {
-        let n = 40;
-        let (hw, d, aw, hg, ag) = series(16, 2, n);
-        println!("EXP_STRONG_HOME== forte(16) manda x fraco(2): Vforte={} E={} Vfraco={} | gols {}-{} em {} jogos ==", hw, d, aw, hg, ag, n);
-        let (hw2, d2, aw2, hg2, ag2) = series(2, 16, n);
-        println!("EXP_WEAK_HOME== fraco(2) manda x forte(16): Vfraco={} E={} Vforte={} | gols {}-{} em {} jogos ==", hw2, d2, aw2, hg2, ag2, n);
-        let (hw3, d3, aw3, hg3, ag3) = series(9, 9, n);
-        println!("EXP_EQUAL== iguais(9) x iguais(9): V1={} E={} V2={} | gols {}-{} em {} jogos ==", hw3, d3, aw3, hg3, ag3, n);
+    fn perf_and_bias() {
+        let levels = [5u8, 6, 5, 7, 6, 5, 8, 6];
+        let t = Instant::now();
+        setup_league(&levels);
+        println!("GENALL== {} ms p/ 8 times (88 jogadores) ==", t.elapsed().as_millis());
+
+        let n = 20u32;
+        let t = Instant::now();
+        for i in 0..n {
+            let _ = play_pair((i % 8) as u32, ((i + 1) % 8) as u32);
+        }
+        let total = t.elapsed().as_millis();
+        println!("PLAYAVG== {} ms/partida ({} partidas em {} ms, elencos em cache) ==", total / n as u128, n, total);
+
+        setup_league(&[16u8, 2, 16, 2, 16, 2, 16, 2]);
+        let (mut sw, mut d, mut ww) = (0u32, 0u32, 0u32);
+        for _ in 0..20 {
+            let (h, a) = play_pair(0, 1);
+            if h > a { sw += 1; } else if h < a { ww += 1; } else { d += 1; }
+        }
+        println!("BIAS_CACHE== forte x fraco: Vforte={} E={} Vfraco={} em 20 (com cache) ==", sw, d, ww);
     }
 }
