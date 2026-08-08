@@ -139,12 +139,12 @@ fn play_once(home_level: u8, away_level: u8) -> (u32, u32) {
     (h, a)
 }
 
+// API do jogo: simula uma partida entre um time de nivel `home_level` (mandante)
+// e outro de `away_level`, e devolve o placar em JSON: {"home":X,"away":Y}.
 #[wasm_bindgen]
-pub fn simulate_match() -> String {
-    let home = make_squad(1, 9);
-    let away = make_squad(2, 9);
-    let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
-    format!("{:?}", result.score)
+pub fn simulate_match(home_level: u8, away_level: u8) -> String {
+    let (h, a) = play_once(home_level, away_level);
+    format!("{{\"home\":{},\"away\":{}}}", h, a)
 }
 
 #[cfg(test)]
