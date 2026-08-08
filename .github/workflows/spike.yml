@@ -4,15 +4,22 @@ on:
     paths: [".github/workflows/spike.yml"]
   workflow_dispatch:
 jobs:
-  experiment:
+  pack:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Rust
+      - name: Rust + wasm-pack
         run: |
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
-      - name: "experimento forca x placar (cargo test --release)"
+          rustup target add wasm32-unknown-unknown
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: "wasm-pack build (web, release)"
         run: |
           set -o pipefail
-          cargo test -p wasmsim --release -- --nocapture 2>&1 | tail -60
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build src/wasmsim --target web --release 2>&1 | tail -25
+          echo "--- pkg ---"; ls -la src/wasmsim/pkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg
+          path: src/wasmsim/pkg
