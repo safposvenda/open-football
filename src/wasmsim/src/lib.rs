@@ -237,9 +237,11 @@ fn make_player_ovr(id: u32, position: PlayerPositionType, ovr: u8, cond: u8) -> 
     let mut p = PlayerGenerator::generate_with_context(
         1, now, position, &empty, &AcademyGenerationContext::average(), 25, 28, None,
     );
-    LevelSkillCurve::retarget(&mut p.skills, target_mean_from_ovr(ovr as f32));
-    // condição: 100 → pronto (14), 0 → esgotado (4). Fadiga reduz o rendimento.
-    p.skills.physical.match_readiness = 4.0 + 10.0 * (cond as f32 / 100.0);
+    // fadiga entra como QUEDA de overall efetivo (lever controlável e claro):
+    // condição 100 → sem perda; condição 20 → ~12 de overall a menos.
+    let eff = (ovr as f32 - (100.0 - cond as f32) * 0.15).max(20.0);
+    LevelSkillCurve::retarget(&mut p.skills, target_mean_from_ovr(eff));
+    p.skills.physical.match_readiness = 14.0;
     p.id = id;
     p
 }
