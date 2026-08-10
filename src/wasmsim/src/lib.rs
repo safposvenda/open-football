@@ -219,6 +219,69 @@ pub fn play_match(home_idx: u32, away_idx: u32) -> String {
     })
 }
 
+// ===== FUNDAÇÃO DO MANAGER: motor sem estado. O JS é dono dos jogadores
+// (dados) e manda as duas escalações; cada jogador tem overall (0..99) e
+// condição (0..100). Aqui geramos um jogador ancorado nesse overall e ajustamos
+// o match_readiness pela condição (cansado joga pior). Devolve placar + gols
+// por SLOT (0..10 = posição no 4-4-2), pro JS mapear no jogador que escalou. =====
+fn target_mean_from_ovr(ovr: f32) -> f32 {
+    let level = (ovr - 26.0) / 3.4; // inverso de ovr = level*3.4 + 26
+    3.6 + level * 0.575             // = BASE + level*STEP
+}
+
+fn make_player_ovr(id: u32, position: PlayerPositionType, ovr: u8, cond: u8) -> Player {
+    let empty = PeopleNameGeneratorData {
+        first_names: Vec::new(), last_names: Vec::new(), nicknames: Vec::new(),
+    };
+    let now = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+    let mut p = PlayerGenerator::generate_with_context(
+        1, now, position, &empty, &AcademyGenerationContext::average(), 25, 28, None,
+    );
+    LevelSkillCurve::retarget(&mut p.skills, target_mean_from_ovr(ovr as f32));
+    // condição: 100 → pronto (14), 0 → esgotado (4). Fadiga reduz o rendimento.
+    p.skills.physical.match_readiness = 4.0 + 10.0 * (cond as f32 / 100.0);
+    p.id = id;
+    p
+}
+
+fn build_xi(team_id: u32, ovr: &[u8], cond: &[u8]) -> MatchSquad {
+    let base = team_id * 100;
+    let main_squad: Vec<MatchPlayer> = POSITIONS_442
+        .iter()
+        .enumerate()
+        .map(|(i, &pos)| {
+            let o = *ovr.get(i).unwrap_or(&60);
+            let c = *cond.get(i).unwrap_or(&100);
+            MatchPlayer::from_player(team_id, &make_player_ovr(base + i as u32, pos, o, c), pos, false, None)
+        })
+        .collect();
+    MatchSquad {
+        team_id,
+        team_name: format!("Team {}", team_id),
+        tactics: Tactics::new(MatchTacticType::T442),
+        main_squad,
+        substitutes: Vec::new(),
+        captain_id: None,
+        vice_captain_id: None,
+        penalty_taker_id: None,
+        free_kick_taker_id: None,
+        selection_omissions: Vec::new(),
+        coach_snapshot: None,
+    }
+}
+
+// Joga a partida entre duas escalações (11 overalls + 11 condições cada lado).
+#[wasm_bindgen]
+pub fn play_lineups(home_ovr: &[u8], home_cond: &[u8], away_ovr: &[u8], away_cond: &[u8]) -> String {
+    let home = build_xi(1, home_ovr, home_cond);
+    let away = build_xi(2, away_ovr, away_cond);
+    let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
+    let dbg = format!("{:?}", result.score);
+    let (h, a) = parse_two(&dbg);
+    let ev = extract_events(&dbg, 1, 2);
+    format!("{{\"home\":{},\"away\":{},\"ev\":{}}}", h, a, ev)
+}
+
 // Compat: partida avulsa entre dois niveis (gera na hora — mais lento).
 #[wasm_bindgen]
 pub fn simulate_match(home_level: u8, away_level: u8) -> String {
@@ -232,10 +295,27 @@ pub fn simulate_match(home_level: u8, away_level: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn two(s: &str) -> (u32, u32) { (field_u32(s, "\"home\":"), field_u32(s, "\"away\":")) }
     #[test]
-    fn events_sanity() {
-        setup_league(&[14u8, 4, 14, 4, 14, 4, 14, 4]);
-        println!("EV_STRONG_HOME== {} ==", play_match(0, 1));
-        println!("EV_WEAK_HOME== {} ==", play_match(1, 0));
+    fn lineups() {
+        let strong = [85u8; 11];
+        let weak = [55u8; 11];
+        let fresh = [100u8; 11];
+        // XI forte manda x XI fraco — forte deve vencer quase sempre
+        let (mut sw, mut d, mut ww) = (0u32, 0u32, 0u32);
+        for _ in 0..15 {
+            let (h, a) = two(&play_lineups(&strong, &fresh, &weak, &fresh));
+            if h > a { sw += 1; } else if h < a { ww += 1; } else { d += 1; }
+        }
+        println!("LINEUP_BIAS== XI 85 x XI 55: Vforte={} E={} Vfraco={} em 15 ==", sw, d, ww);
+        // mesmo XI, mas um lado ESGOTADO (condição 20) x descansado
+        let tired = [20u8; 11];
+        let (mut fw, mut fd, mut fl) = (0u32, 0u32, 0u32);
+        for _ in 0..15 {
+            let (h, a) = two(&play_lineups(&strong, &fresh, &strong, &tired));
+            if h > a { fw += 1; } else if h < a { fl += 1; } else { fd += 1; }
+        }
+        println!("FATIGUE== iguais(85), casa descansada x fora esgotado(cond20): Vcasa={} E={} Vfora={} em 15 ==", fw, fd, fl);
+        println!("LINEUP_EV== {} ==", play_lineups(&strong, &fresh, &weak, &fresh));
     }
 }
