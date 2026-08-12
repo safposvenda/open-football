@@ -1,7 +1,6 @@
 name: core-spike
 on:
-  push:
-    paths: [".github/workflows/spike.yml"]
+  push: { paths: [".github/workflows/spike.yml"] }
   workflow_dispatch:
 jobs:
   build:
@@ -14,16 +13,12 @@ jobs:
           rustup default stable
           rustup target add wasm32-unknown-unknown
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: "medir perf (cargo test --release)"
+      - name: test formations
+        run: cargo test -p wasmsim --release -- --nocapture 2>&1 | tail -30
+      - name: wasm-pack build
         run: |
           set -o pipefail
-          cargo test -p wasmsim --release -- --nocapture 2>&1 | tail -40
-      - name: "wasm-pack build (web, release)"
-        run: |
-          set -o pipefail
-          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build src/wasmsim --target web --release 2>&1 | tail -20
-          echo "--- pkg ---"; ls -la src/wasmsim/pkg
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' wasm-pack build src/wasmsim --target web --release 2>&1 | tail -15
+          ls -la src/wasmsim/pkg
       - uses: actions/upload-artifact@v4
-        with:
-          name: pkg
-          path: src/wasmsim/pkg
+        with: { name: pkg, path: src/wasmsim/pkg }
