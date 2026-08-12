@@ -246,9 +246,20 @@ fn make_player_ovr(id: u32, position: PlayerPositionType, ovr: u8, cond: u8) -> 
     p
 }
 
-fn build_xi(team_id: u32, ovr: &[u8], cond: &[u8]) -> MatchSquad {
+fn tactic_for(code: u8) -> MatchTacticType {
+    match code {
+        1 => MatchTacticType::T433,
+        2 => MatchTacticType::T352,
+        3 => MatchTacticType::T451,
+        _ => MatchTacticType::T442,
+    }
+}
+
+fn build_xi(team_id: u32, ovr: &[u8], cond: &[u8], form: u8) -> MatchSquad {
     let base = team_id * 100;
-    let main_squad: Vec<MatchPlayer> = POSITIONS_442
+    let tactics = Tactics::new(tactic_for(form));
+    let main_squad: Vec<MatchPlayer> = tactics
+        .positions()
         .iter()
         .enumerate()
         .map(|(i, &pos)| {
@@ -260,7 +271,7 @@ fn build_xi(team_id: u32, ovr: &[u8], cond: &[u8]) -> MatchSquad {
     MatchSquad {
         team_id,
         team_name: format!("Team {}", team_id),
-        tactics: Tactics::new(MatchTacticType::T442),
+        tactics,
         main_squad,
         substitutes: Vec::new(),
         captain_id: None,
@@ -274,9 +285,9 @@ fn build_xi(team_id: u32, ovr: &[u8], cond: &[u8]) -> MatchSquad {
 
 // Joga a partida entre duas escalações (11 overalls + 11 condições cada lado).
 #[wasm_bindgen]
-pub fn play_lineups(home_ovr: &[u8], home_cond: &[u8], away_ovr: &[u8], away_cond: &[u8]) -> String {
-    let home = build_xi(1, home_ovr, home_cond);
-    let away = build_xi(2, away_ovr, away_cond);
+pub fn play_lineups(home_ovr: &[u8], home_cond: &[u8], home_form: u8, away_ovr: &[u8], away_cond: &[u8], away_form: u8) -> String {
+    let home = build_xi(1, home_ovr, home_cond, home_form);
+    let away = build_xi(2, away_ovr, away_cond, away_form);
     let result = FootballEngine::<840, 545>::play(home, away, false, true, false);
     let dbg = format!("{:?}", result.score);
     let (h, a) = parse_two(&dbg);
@@ -299,25 +310,15 @@ mod tests {
     use super::*;
     fn two(s: &str) -> (u32, u32) { (field_u32(s, "\"home\":"), field_u32(s, "\"away\":")) }
     #[test]
-    fn lineups() {
-        let strong = [85u8; 11];
-        let weak = [55u8; 11];
+    fn formations() {
+        let ovr = [70u8; 11];
         let fresh = [100u8; 11];
-        // XI forte manda x XI fraco — forte deve vencer quase sempre
-        let (mut sw, mut d, mut ww) = (0u32, 0u32, 0u32);
-        for _ in 0..15 {
-            let (h, a) = two(&play_lineups(&strong, &fresh, &weak, &fresh));
-            if h > a { sw += 1; } else if h < a { ww += 1; } else { d += 1; }
+        let (mut hg, mut ag, mut hw, mut d, mut aw) = (0u32, 0u32, 0u32, 0u32, 0u32);
+        for _ in 0..24 {
+            let (h, a) = two(&play_lineups(&ovr, &fresh, 1, &ovr, &fresh, 3));
+            hg += h; ag += a; if h > a { hw += 1; } else if h < a { aw += 1; } else { d += 1; }
         }
-        println!("LINEUP_BIAS== XI 85 x XI 55: Vforte={} E={} Vfraco={} em 15 ==", sw, d, ww);
-        // mesmo XI, mas um lado ESGOTADO (condição 20) x descansado
-        let tired = [20u8; 11];
-        let (mut fw, mut fd, mut fl) = (0u32, 0u32, 0u32);
-        for _ in 0..15 {
-            let (h, a) = two(&play_lineups(&strong, &fresh, &strong, &tired));
-            if h > a { fw += 1; } else if h < a { fl += 1; } else { fd += 1; }
-        }
-        println!("FATIGUE== iguais(85), casa descansada x fora esgotado(cond20): Vcasa={} E={} Vfora={} em 15 ==", fw, fd, fl);
-        println!("LINEUP_EV== {} ==", play_lineups(&strong, &fresh, &weak, &fresh));
+        println!("FORMATION== 4-3-3(ofe) casa x 4-5-1(def) fora, ovr 70 iguais, 24 jogos: gols {}-{}, V-E-V {}-{}-{} ==", hg, ag, hw, d, aw);
+        println!("FORM_EV== {} ==", play_lineups(&[85u8;11], &fresh, 1, &[55u8;11], &fresh, 0));
     }
 }
